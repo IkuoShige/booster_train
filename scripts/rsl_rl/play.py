@@ -8,7 +8,6 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-from importlib.metadata import version
 import sys
 
 from isaaclab.app import AppLauncher
@@ -144,21 +143,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
     # extract the neural network module
-    # we do this in a try-except to maintain backwards compatibility.
-    try:
-        # version 2.3 onwards
-        policy_nn = ppo_runner.alg.policy
-    except AttributeError:
-        # version 2.2 and below
-        policy_nn = ppo_runner.alg.actor_critic
+    policy_nn = ppo_runner.alg.policy
 
     # extract the normalizer
     if hasattr(policy_nn, "actor_obs_normalizer"):
         normalizer = policy_nn.actor_obs_normalizer
     elif hasattr(policy_nn, "student_obs_normalizer"):
         normalizer = policy_nn.student_obs_normalizer
-    elif hasattr(ppo_runner, "obs_normalizer"):     # compatibility for older versions
-        normalizer = ppo_runner.obs_normalizer
     else:
         normalizer = None
 
@@ -181,8 +172,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # reset environment
     obs = env.get_observations()
-    if version("rsl-rl-lib").startswith("2.3."):
-        obs, _ = obs
     timestep = 0
     # simulate environment
     while simulation_app.is_running():

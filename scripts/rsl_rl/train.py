@@ -49,28 +49,6 @@ sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-"""Check for minimum supported RSL-RL version."""
-
-import importlib.metadata as metadata
-import platform
-
-from packaging import version
-
-# for distributed training, check minimum supported rsl-rl version
-RSL_RL_VERSION = "2.3.1"
-installed_version = metadata.version("rsl-rl-lib")
-if args_cli.distributed and version.parse(installed_version) < version.parse(RSL_RL_VERSION):
-    if platform.system() == "Windows":
-        cmd = [r".\isaaclab.bat", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
-    else:
-        cmd = ["./isaaclab.sh", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
-    print(
-        f"Please install the correct version of RSL-RL.\nExisting version is: '{installed_version}'"
-        f" and required version is: '{RSL_RL_VERSION}'.\nTo install the correct version, run:"
-        f"\n\n\t{' '.join(cmd)}\n"
-    )
-    exit(1)
-
 """Rest everything follows."""
 
 import gymnasium as gym
@@ -99,10 +77,44 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import booster_train.tasks  # noqa: F401
 
+try:
+    import wandb
+
+    HAS_WANDB = True
+except ImportError:
+    HAS_WANDB = False
+
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+class WandbVideoUploader(gym.Wrapper):
+    """Monitors video directory and uploads new videos to wandb."""
+
+    def __init__(self, env, video_folder):
+        super().__init__(env)
+        self.video_folder = video_folder
+        self._uploaded = set()
+
+    def step(self, action):
+        result = self.env.step(action)
+        self._upload_new_videos()
+        return result
+
+    def _upload_new_videos(self):
+        if not HAS_WANDB or wandb.run is None:
+            return
+        import glob as _glob
+
+        for path in sorted(_glob.glob(os.path.join(self.video_folder, "*.mp4"))):
+            if path not in self._uploaded:
+                try:
+                    wandb.log({"training_video": wandb.Video(path, fps=30, format="mp4")})
+                    self._uploaded.add(path)
+                except Exception:
+                    pass  # file may still be in progress
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -173,6 +185,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("[INFO] Recording videos during training.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
+        if HAS_WANDB and args_cli.logger == "wandb":
+            env = WandbVideoUploader(env, video_kwargs["video_folder"])
 
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
