@@ -1,0 +1,20 @@
+version: 1
+surface_profiles:
+  hard:
+    static_friction: 0.77
+    dynamic_friction: 0.07
+    restitution: 0.75
+    linear_damping: 0.01
+    angular_damping: 4.28
+  grass:
+    static_friction: 0.98
+    dynamic_friction: 0.15
+    restitution: 0.71
+    linear_damping: 0.01
+    angular_damping: 4.95
+noise_sigma:
+  static_friction: 0.05
+  dynamic_friction: 0.05
+  restitution: 0.03
+  linear_damping: 0.1
+  angular_damping: 0.1

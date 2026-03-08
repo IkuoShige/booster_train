@@ -4,7 +4,7 @@
 
 This repository provides a set of reinforcement learning tasks for Booster robots using [Isaac Lab](https://isaac-sim.github.io/IsaacLab/main/index.html).
 Currently it includes the fabulous [BeyondMimic motion tracking](https://github.com/HybridRobotics/whole_body_tracking) framework adapted to Booster K1 robots.
-This repository follows the standard Isaac Lab project structure, and is tested with IsaacLab 2.2 and Isaac Sim 5.0.
+This repository follows the standard Isaac Lab project structure, and is tested with IsaacLab 2.3 and Isaac Sim 5.1.
 
 ## Installation
 
@@ -49,6 +49,13 @@ This repository follows the standard Isaac Lab project structure, and is tested 
     python scripts/rsl_rl/train.py --task=<TASK_NAME> --headless --device cuda:N
     ```
 
+- Resume training from an arbitrary checkpoint path:
+
+    ```bash
+    # useful for PAiD Stage II/III transfer from Stage I checkpoint
+    python scripts/rsl_rl/train.py --task=<TASK_NAME> --headless --device cuda:N --resume_checkpoint=<CHECKPOINT_PATH>
+    ```
+
 - Play a trained policy and export it for deployment:
 
     ```bash
@@ -61,6 +68,18 @@ This repository follows the standard Isaac Lab project structure, and is tested 
 ## Deploy
 
 After a model has been trained and exported, you can deploy the trained policy in MuJoCo or on real Booster robots using the [booster_deploy](https://github.com/BoosterRobotics/booster_deploy) repository. For more details, please refer to the instructions in the [booster_deploy](https://github.com/BoosterRobotics/booster_deploy) repository.
+
+## Humanoid Soccer (PAiD)
+
+- Added tasks:
+  - `Booster-K1-HumanoidSoccer-PAiD-Stage2-v0`
+  - `Booster-K1-HumanoidSoccer-PAiD-Stage3-v0`
+  - `Booster-K1-HumanoidSoccer-PAiD-Play-v0`
+  - `Booster-K1-HumanoidSoccer-PAiD-Eval-Static-v0`
+  - `Booster-K1-HumanoidSoccer-PAiD-Eval-Rolling-v0`
+- Documentation:
+  - `source/booster_train/docs/HUMANOID_SOCCER_PAID.md`
+  - `source/booster_train/docs/HUMANOID_SOCCER_REPRO.md`
 
 
 ## Acknowledgements

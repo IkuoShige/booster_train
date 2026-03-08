@@ -32,6 +32,12 @@ parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
+parser.add_argument(
+    "--resume_checkpoint",
+    type=str,
+    default=None,
+    help="Absolute/relative checkpoint path to load before training (overrides --resume/--load_run lookup).",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -117,6 +123,60 @@ class WandbVideoUploader(gym.Wrapper):
                     pass  # file may still be in progress
 
 
+def _copy_with_overlap(target: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
+    """Copy source values into target with overlapping slices and keep remaining target init."""
+    out = target.clone()
+    slices = tuple(slice(0, min(t, s)) for t, s in zip(target.shape, source.shape))
+    out[slices] = source[slices]
+    return out
+
+
+def _load_checkpoint_with_shape_adaptation(runner: OnPolicyRunner, checkpoint_path: str):
+    """Load checkpoint even when input observation dims changed between stages."""
+    ckpt = torch.load(checkpoint_path, map_location=runner.device)
+    if "model_state_dict" not in ckpt:
+        raise KeyError(f"'model_state_dict' not found in checkpoint: {checkpoint_path}")
+
+    src_state = ckpt["model_state_dict"]
+    dst_state = runner.alg.policy.state_dict()
+
+    merged_state = {}
+    n_exact = 0
+    n_adapted = 0
+    n_fallback = 0
+
+    for key, dst_tensor in dst_state.items():
+        src_tensor = src_state.get(key, None)
+        if not isinstance(src_tensor, torch.Tensor):
+            merged_state[key] = dst_tensor
+            n_fallback += 1
+            continue
+
+        src_tensor = src_tensor.to(device=dst_tensor.device, dtype=dst_tensor.dtype)
+        if src_tensor.shape == dst_tensor.shape:
+            merged_state[key] = src_tensor
+            n_exact += 1
+            continue
+
+        if src_tensor.ndim == dst_tensor.ndim and src_tensor.ndim > 0:
+            merged_state[key] = _copy_with_overlap(dst_tensor, src_tensor)
+            n_adapted += 1
+        else:
+            merged_state[key] = dst_tensor
+            n_fallback += 1
+
+    load_result = runner.alg.policy.load_state_dict(merged_state, strict=False)
+    missing = []
+    unexpected = []
+    if isinstance(load_result, tuple) and len(load_result) == 2:
+        missing, unexpected = load_result
+    print(
+        "[INFO]: Checkpoint shape-adapted load done: "
+        f"exact={n_exact}, adapted={n_adapted}, fallback={n_fallback}, "
+        f"missing={len(missing)}, unexpected={len(unexpected)}"
+    )
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
@@ -126,6 +186,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
+    if agent_cfg.logger == "wandb" and not args_cli.video:
+        print("[WARN]: W&B logger is enabled but --video is not set. No training videos will be uploaded.")
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
@@ -171,8 +233,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = multi_agent_to_single_agent(env)
 
     # save resume path before creating a new log_dir
+    resume_path = None
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+    if args_cli.resume_checkpoint is not None:
+        resume_path = os.path.abspath(args_cli.resume_checkpoint)
 
     # wrap for video recording
     if args_cli.video:
@@ -185,7 +250,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("[INFO] Recording videos during training.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
-        if HAS_WANDB and args_cli.logger == "wandb":
+        if HAS_WANDB and agent_cfg.logger == "wandb":
             env = WandbVideoUploader(env, video_kwargs["video_folder"])
 
     # wrap around environment for rsl-rl
@@ -196,10 +261,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+    if resume_path is not None:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-        # load previously trained model
-        runner.load(resume_path)
+        try:
+            # regular strict load
+            runner.load(resume_path)
+        except RuntimeError as err:
+            if "size mismatch" not in str(err):
+                raise
+            print(f"[WARN]: Strict checkpoint load failed with shape mismatch: {err}")
+            print("[INFO]: Falling back to shape-adapted transfer load.")
+            _load_checkpoint_with_shape_adaptation(runner, resume_path)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
