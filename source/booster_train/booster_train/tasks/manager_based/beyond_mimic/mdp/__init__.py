@@ -13,3 +13,4 @@ from .rewards import *  # noqa: F401, F403
 from .soccer import *  # noqa: F401, F403
 from .terminations import *  # noqa: F401, F403
 from .commands import *  # noqa: F401, F403
+from .foot_contact import *  # noqa: F401, F403

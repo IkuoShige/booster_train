@@ -332,8 +332,11 @@ class MotionCommand(CommandTerm):
         robot_anchor_pos_w_repeat = self.robot_anchor_pos_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
         robot_anchor_quat_w_repeat = self.robot_anchor_quat_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
 
-        delta_pos_w = robot_anchor_pos_w_repeat
-        delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
+        if self.cfg.use_motion_xy_anchor:
+            delta_pos_w = anchor_pos_w_repeat.clone()
+        else:
+            delta_pos_w = robot_anchor_pos_w_repeat
+            delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
         delta_ori_w = yaw_quat(quat_mul(robot_anchor_quat_w_repeat, quat_inv(anchor_quat_w_repeat)))
 
         self.body_quat_relative_w = quat_mul(delta_ori_w, self.body_quat_w)
@@ -410,6 +413,10 @@ class MotionCommandCfg(CommandTermCfg):
     default_motion_body_names: list[str] | None = None
     default_motion_joint_names: list[str] | None = None
     tail_len: int = 0
+
+    use_motion_xy_anchor: bool = False
+    """If True, body-tracking targets follow the motion's XY position (robot must locomote to match).
+    If False (default, original behavior), body-tracking targets are placed at the robot's current XY."""
 
     pose_range: dict[str, tuple[float, float]] = {}
     velocity_range: dict[str, tuple[float, float]] = {}
